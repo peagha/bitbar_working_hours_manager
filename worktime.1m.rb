@@ -16,6 +16,7 @@
 # - highlight unapproved ifponto entries
 # - highlight GF / IFPonto differences
 # - add GF details
+# - test cache entry
 
 require 'net/http'
 require 'uri'
@@ -126,7 +127,7 @@ class IFPontoClient
 
       entry = JSON.parse(response.body)['itens'].first['mc1']
       if ['FALTA', 'FOLGA', nil].include?(entry)
-        :not_available
+        nil
       else
         TimeStamp(entry)
       end
@@ -161,7 +162,8 @@ class CachedIFPontoClient
   end
 
   def start_time(date)
-    @cache_store.fetch("start_time:#{date.strftime('%Y-%m-%d')}") do
+    expire_after_rule = ->(value) { value.nil? ? (10 * 60) : nil }
+    @cache_store.fetch("start_time:#{date.strftime('%Y-%m-%d')}", expire_after_rule: expire_after_rule) do
       @client.start_time(date)
     end
   end
@@ -230,13 +232,14 @@ class PStoreCacheStore
     @pstore = PStore.new('/tmp/settings.pstore')
   end
 
-  def fetch(key)
+  def fetch(key, expire_after: nil, expire_after_rule: ->(_) { expire_after })
     cached_value = read(key)
-    if cached_value
-      cached_value
+
+    if cached_value && !cached_value.expired?
+      cached_value.value
     else
       yield.tap do |new_value|
-        write(key, new_value)
+        write(key, new_value, expire_after_rule.call(new_value))
       end
     end
   end
@@ -245,8 +248,22 @@ class PStoreCacheStore
     @pstore.transaction { |store| store[key] }
   end
 
-  def write(key, value)
-    @pstore.transaction { |store| store[key] = value }
+  def write(key, value, expire_after = nil)
+    @pstore.transaction { |store| store[key] = Entry.new(value, expire_after) }
+  end
+
+  class Entry
+    attr_reader :value
+
+    def initialize(value, expire_after = nil, created = Time.now)
+      @value = value
+      @expire_after = expire_after
+      @created = created
+    end
+
+    def expired?(now = Time.now)
+      @expire_after && @created + @expire_after >= now
+    end
   end
 end
 
@@ -330,7 +347,7 @@ if defined?(RSpec)
       @store = {}
     end
 
-    def fetch(key)
+    def fetch(key, **)
       cached_value = read(key)
       if cached_value
         cached_value
@@ -531,7 +548,7 @@ end
 if !defined?(RSpec)
   ifponto_client = CachedIFPontoClient.new
   start_time = ifponto_client.start_time(Date.today)
-  worked_today = start_time != :not_available ? Today.new(start_time) : OpenStruct.new(started: 'N/A', ends: 'N/A', worked: 'N/A')
+  worked_today = start_time ? Today.new(start_time) : OpenStruct.new(started: 'N/A', ends: 'N/A', worked: 'N/A')
   puts worked_today.worked
   puts "---"
   puts "started #{worked_today.started}"
@@ -550,3 +567,4 @@ if !defined?(RSpec)
     puts date.strftime('%d/%m: ') + worked.to_s + " / " + worked_gf.to_s
   end
 end
+
