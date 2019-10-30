@@ -169,7 +169,8 @@ class CachedIFPontoClient
   end
 
   def worked(date)
-    @cache_store.fetch("worked:#{date.strftime('%Y-%m-%d')}") do
+    expire_after_rule = ->(value) { value == TimeStamp('0:00') ? 60 * 60 : 60 * 60 * 24 }
+    @cache_store.fetch("worked:#{date.strftime('%Y-%m-%d')}", expire_after_rule: expire_after_rule) do
       @client.worked(date)
     end
   end
@@ -262,7 +263,7 @@ class PStoreCacheStore
     end
 
     def expired?(now = Time.now)
-      @expire_after && @created + @expire_after >= now
+      @expire_after && @created + @expire_after < now
     end
   end
 end
