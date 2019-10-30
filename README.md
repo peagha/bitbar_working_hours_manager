@@ -1,0 +1,1 @@
+# bitbar_working_hours_manager
