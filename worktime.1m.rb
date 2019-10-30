@@ -1,0 +1,552 @@
+#!/usr/bin/env /Users/peagha/.rbenv/shims/ruby
+
+# <bitbar.title>Work Time</bitbar.title>
+# <bitbar.version>v0.1</bitbar.version>
+# <bitbar.author>Philippe Hardardt</bitbar.author>
+# <bitbar.author.github>peagha</bitbar.author.github>
+# <bitbar.desc></bitbar.desc>
+# <bitbar.image></bitbar.image>
+# <bitbar.abouturl>http://github.com/kizzx2/bitbar-countdown-timer</bitbar.abouturl>
+
+# TODO:
+# - don't cache for long when ifponto time == 0
+# - cache GF for a short period of time
+# - make script compatible with older versions of Ruby
+# - add GF create time entry
+# - highlight unapproved ifponto entries
+# - highlight GF / IFPonto differences
+# - add GF details
+
+require 'net/http'
+require 'uri'
+require 'json'
+require 'cgi'
+require 'date'
+require 'pstore'
+require 'open3'
+
+def TimeStamp(hours_or_value, minutes = :nd)
+  if minutes == :nd
+    case hours_or_value
+    when Time then TimeStamp.new(hours_or_value.hour, hours_or_value.min)
+    when Float then TimeStamp.new(0, hours_or_value * 60)
+    when String then
+      hours, minutes = hours_or_value.split(':')
+      TimeStamp.new(Integer(hours, 10), Integer(minutes, 10))
+    else raise ArgumentError
+    end
+  else
+    TimeStamp.new(hours_or_value, minutes)
+  end
+end
+
+class TimeStamp
+  attr_reader :hours, :minutes
+
+  def initialize(hours, minutes)
+    @hours = hours
+    @minutes = minutes
+
+    while @minutes < 0
+      @hours -= 1
+      @minutes += 60
+    end
+
+    while @minutes >= 60
+      @hours += 1
+      @minutes -= 60
+    end
+  end
+
+  def to_s
+    sprintf('%.2d:%.2d', @hours, @minutes)
+  end
+
+  def ==(other)
+    self.minutes == other.minutes && self.hours == other.hours
+  end
+
+  def -(other)
+    TimeStamp.new(self.hours - other.hours, self.minutes - other.minutes)
+  end
+
+  def +(other)
+    TimeStamp.new(self.hours + other.hours, self.minutes + other.minutes)
+  end
+
+  def to_minutes
+    self.hours * 60 + self.minutes
+  end
+
+  def inspect
+    "#<TimeStamp #{to_s}>"
+  end
+end
+
+class Today
+  def initialize(started, break_time = TimeStamp(1, 15))
+    @started = started
+    @break_time = break_time
+  end
+
+  def started
+    @started
+  end
+
+  def ends
+    @started + @break_time + TimeStamp(8, 0)
+  end
+
+  def worked(now = TimeStamp(Time.now))
+    now - @started - lunch_time_elapsed_minutes(now)
+  end
+
+  private
+
+  def lunch_time_elapsed_minutes(now)
+    elapsed = now - TimeStamp(12, 0)
+
+    TimeStamp(0, elapsed.to_minutes.clamp(0, @break_time.to_minutes))
+  end
+end
+
+class IFPontoClient
+  def initialize
+    @credentials = CachedIfPontoCredentials.new
+  end
+
+  def start_time(date)
+    @credentials.with_token do |token|
+      response = Net::HTTP.post(
+        URI('https://ifractal.srv.br/ifPonto/plataformatec/db/select_ponto.php?pag=ponto_espelho'),
+        "cmd=get_espelho2&de=#{date.strftime('%d/%m/%Y')}&ate=#{date.strftime('%d/%m/%Y')}&posicao=0&cod_funcionario=&funcionario=&cod_cargo=&cargo=&cod_depto=&depto=&cod_empresa=&empresa=&tipo_salario=&tipo_pessoa=&demitido=false&bloqueado=false",
+        'Cookie' => "iFractal_Sistemas=#{token}"
+      )
+      throw(:invalid_token) unless response.code == "200"
+
+      entry = JSON.parse(response.body)['itens'].first['mc1']
+      if ['FALTA', 'FOLGA', nil].include?(entry)
+        :not_available
+      else
+        TimeStamp(entry)
+      end
+    end
+  end
+
+  def worked(date)
+    @credentials.with_token do |token|
+      response = Net::HTTP.post(
+        URI('https://ifractal.srv.br/ifPonto/plataformatec/db/select_ponto.php?pag=ponto_espelho'),
+        "cmd=get_espelho2&de=#{date.strftime('%d/%m/%Y')}&ate=#{date.strftime('%d/%m/%Y')}&posicao=0&cod_funcionario=&funcionario=&cod_cargo=&cargo=&cod_depto=&depto=&cod_empresa=&empresa=&tipo_salario=&tipo_pessoa=&demitido=false&bloqueado=false",
+        'Cookie' => "iFractal_Sistemas=#{token}"
+      )
+      entry = JSON.parse(response.body)['itens'].first
+      worked_float = entry['t_h_total_calculado'].to_f
+
+      if worked_float > 0
+        TimeStamp(worked_float)
+      else
+        entry['alteracao'].split.each_slice(2).sum(TimeStamp('00:00')) do |start_time, end_time|
+          TimeStamp(end_time) - TimeStamp(start_time)
+        end
+      end
+    end
+  end
+end
+
+class CachedIFPontoClient
+  def initialize(client = IFPontoClient.new, cache_store = PStoreCacheStore.new)
+    @client = client
+    @cache_store = cache_store
+  end
+
+  def start_time(date)
+    @cache_store.fetch("start_time:#{date.strftime('%Y-%m-%d')}") do
+      @client.start_time(date)
+    end
+  end
+
+  def worked(date)
+    @cache_store.fetch("worked:#{date.strftime('%Y-%m-%d')}") do
+      @client.worked(date)
+    end
+  end
+end
+
+class IfPontoCredentials
+  def initialize
+    @credential_source = CredentialDialog.new
+  end
+
+  def with_token
+    yield(request_token)
+  end
+
+  def request_token
+    response = Net::HTTP.post(
+      URI('https://ifractal.srv.br/ifPonto/plataformatec/header.php'),
+      "login=#{user}&senha=#{password}",
+    )
+    cookie = CGI::Cookie.parse(response.header['Set-Cookie'])
+    cookie['iFractal_Sistemas'].first
+  end
+
+  private
+
+  def user
+    @credential_source.ifponto_username
+  end
+
+  def password
+    @credential_source.ifponto_password
+  end
+end
+
+class CachedIfPontoCredentials
+  def initialize(ifponto_credentials = IfPontoCredentials.new, cache_store = PStoreCacheStore.new)
+    @ifponto_credentials = ifponto_credentials
+    @cache_store = cache_store
+  end
+
+  def with_token
+    result = catch(:invalid_token) { yield(request_token) }
+
+    if result
+      result
+    else
+      new_token = @ifponto_credentials.request_token
+      @cache_store.write('ifponto_token', new_token)
+      yield(new_token)
+    end
+  end
+
+  def request_token
+    @cache_store.fetch('ifponto_token') { @ifponto_credentials.request_token }
+  end
+end
+
+class PStoreCacheStore
+  def initialize
+    @pstore = PStore.new('/tmp/settings.pstore')
+  end
+
+  def fetch(key)
+    cached_value = read(key)
+    if cached_value
+      cached_value
+    else
+      yield.tap do |new_value|
+        write(key, new_value)
+      end
+    end
+  end
+
+  def read(key)
+    @pstore.transaction { |store| store[key] }
+  end
+
+  def write(key, value)
+    @pstore.transaction { |store| store[key] = value }
+  end
+end
+
+class CredentialDialog
+  def initialize(store = PStoreCacheStore.new)
+    @store = store
+  end
+
+  def ifponto_username
+    @store.fetch('ifponto_username') { dialog('Usuário do IFPonto:') }
+  end
+
+  def ifponto_password
+    @store.fetch('ifponto_password') { dialog('Senha do IFPonto:') }
+  end
+
+  def glass_factory_member_id
+    @store.fetch('glass_factory_member_id') { dialog('User ID do GlassFactory:') }
+  end
+
+  def glass_factory_email
+    @store.fetch('glass_factory_email') { dialog('Email do GlassFactory:') }
+  end
+
+  def glass_factory_token
+    @store.fetch('glass_factory_token') { dialog('Token do GlassFactory:') }
+  end
+
+  def dialog(message)
+    script = 'Tell application "System Events" to display dialog "' + message + '" default answer ""'
+    Open3.capture3('osascript', *['-e', script, '-e', 'text returned of result'])
+      .first
+      .strip
+      .force_encoding('UTF-8')
+  end
+end
+
+class GlassFactoryClient
+  def initialize
+    @credential_source = CredentialDialog.new
+  end
+
+  def worked(date)
+    query_string = URI.encode_www_form(
+      start: date.strftime('%Y-%m-%d'),
+      end: date.strftime('%Y-%m-%d')
+    )
+
+    member_id = @credential_source.glass_factory_member_id
+    url = URI("https://plataformatec.glassfactory.io/api/public/v1/members/#{member_id}/time_logs.json?#{query_string}")
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+
+    request = Net::HTTP::Get.new(url)
+    request["X-User-Token"] = @credential_source.glass_factory_token
+    request["X-User-Email"] = @credential_source.glass_factory_email
+    request["X-Account-Subdomain"] = 'plataformatec'
+
+    minutes = JSON.parse(http.request(request).body).sum { |entry| entry['time'] } / 60
+    TimeStamp(0, minutes)
+  end
+end
+
+class CachedGlassFactoryClient
+  def initialize(client = GlassFactoryClient.new, cache_store = PStoreCacheStore.new)
+    @client = client
+    @cache_store = cache_store
+  end
+
+  def worked(date)
+    @cache_store.fetch("gf_worked:#{date.strftime('%Y-%m-%d')}") do
+      @client.worked(date)
+    end
+  end
+end
+
+if defined?(RSpec)
+  class MemoryCache
+    def initialize
+      @store = {}
+    end
+
+    def fetch(key)
+      cached_value = read(key)
+      if cached_value
+        cached_value
+      else
+        yield.tap do |new_value|
+          write(key, new_value)
+        end
+      end
+    end
+
+    def read(key)
+      @store[key]
+    end
+
+    def write(key, value)
+      @store[key] = value
+    end
+  end
+
+  RSpec.describe CachedIFPontoClient do
+    describe '#start_time' do
+      it 'caches the result' do
+        client = double(IFPontoClient)
+        allow(client).to receive(:start_time).with(Date.today).and_return(TimeStamp('10:00'))
+        allow(client).to receive(:start_time).with(Date.today - 1).and_return(TimeStamp('10:30'))
+        cached_client = CachedIFPontoClient.new(client, MemoryCache.new)
+
+        expect(cached_client.start_time(Date.today)).to eq(TimeStamp('10:00'))
+        expect(cached_client.start_time(Date.today - 1)).to eq(TimeStamp('10:30'))
+        expect(cached_client.start_time(Date.today)).to eq(TimeStamp('10:00'))
+        expect(cached_client.start_time(Date.today - 1)).to eq(TimeStamp('10:30'))
+
+        expect(client).to have_received(:start_time).with(Date.today).once
+        expect(client).to have_received(:start_time).with(Date.today - 1).once
+      end
+    end
+
+    describe '#worked' do
+      it 'caches the result' do
+        client = double(IFPontoClient)
+        allow(client).to receive(:worked).with(Date.today).and_return(TimeStamp('08:00'))
+        allow(client).to receive(:worked).with(Date.today - 1).and_return(TimeStamp('08:30'))
+        cached_client = CachedIFPontoClient.new(client, MemoryCache.new)
+
+        expect(cached_client.worked(Date.today)).to eq(TimeStamp('08:00'))
+        expect(cached_client.worked(Date.today - 1)).to eq(TimeStamp('08:30'))
+        expect(cached_client.worked(Date.today)).to eq(TimeStamp('08:00'))
+        expect(cached_client.worked(Date.today - 1)).to eq(TimeStamp('08:30'))
+
+        expect(client).to have_received(:worked).with(Date.today).once
+        expect(client).to have_received(:worked).with(Date.today - 1).once
+      end
+    end
+  end
+
+  RSpec.describe CachedIfPontoCredentials do
+    let(:cache_store) { MemoryCache.new }
+
+    describe '#with_token' do
+      it 'caches the token' do
+        ifponto_credentials = double(IfPontoCredentials, request_token: 'token')
+        cached_credentials = CachedIfPontoCredentials.new(ifponto_credentials, cache_store)
+        yielded = []
+
+        tokens = Array.new(2) do
+          cached_credentials.with_token { |token| yielded << token; token }
+        end
+
+        expect(yielded).to eq(['token', 'token'])
+        expect(tokens).to eq(['token', 'token'])
+        expect(ifponto_credentials).to have_received(:request_token).once
+      end
+
+      it 'yields a new token when :invalid_token is thrown' do
+        ifponto_credentials = double(IfPontoCredentials)
+        allow(ifponto_credentials).to receive(:request_token).and_return('first_token', 'second_token')
+        cached_credentials = CachedIfPontoCredentials.new(ifponto_credentials, cache_store)
+
+        token = cached_credentials.with_token do |token|
+          throw(:invalid_token) if token == 'first_token'
+          token
+        end
+
+        expect(token).to eq('second_token')
+      end
+    end
+  end
+
+  RSpec.describe Today do
+    describe '#ends' do
+      it 'returns the time when the expected work hours are complete' do
+        started = TimeStamp(10, 0)
+        today = Today.new(started)
+
+        expect(today.ends).to eq(TimeStamp(19, 15))
+      end
+    end
+
+    describe '#started' do
+      it 'is equal to the start time' do
+        started = TimeStamp(10, 0)
+        today = Today.new(started)
+
+        expect(today.started).to eq(started)
+      end
+    end
+
+    describe '#worked' do
+      it 'shows how much time is complete so far' do
+        started = TimeStamp(10, 0)
+        today = Today.new(started)
+        now = TimeStamp('11:00')
+
+        expect(today.worked(now)).to eq(TimeStamp(1, 0))
+      end
+
+      it 'stops the clock during break time' do
+        started = TimeStamp(10, 0)
+        today = Today.new(started)
+
+        now = TimeStamp('12:00')
+        expect(today.worked(now)).to eq(TimeStamp(2, 0))
+
+        now = TimeStamp('12:01')
+        expect(today.worked(now)).to eq(TimeStamp(2, 0))
+
+        now = TimeStamp('13:15')
+        expect(today.worked(now)).to eq(TimeStamp(2, 0))
+
+        now = TimeStamp('13:16')
+        expect(today.worked(now)).to eq(TimeStamp(2, 1))
+      end
+    end
+  end
+
+  RSpec.describe TimeStamp do
+    describe 'overflow' do
+      it 'handles minutes above 59' do
+        expect(TimeStamp(8,60)).to eq(TimeStamp(9,0))
+        expect(TimeStamp(8,61)).to eq(TimeStamp(9,1))
+      end
+
+      it 'handles minutes below 0' do
+        expect(TimeStamp(8,-1)).to eq(TimeStamp(7,59))
+        expect(TimeStamp(8,-61)).to eq(TimeStamp(6,59))
+      end
+    end
+
+    describe '#to_minutes' do
+      it 'converts hours into minutes' do
+        expect(TimeStamp(1, 1).to_minutes).to eq(61)
+      end
+    end
+
+    describe '#to_s' do
+      it 'generates a string that represents the time stamp' do
+        expect(TimeStamp(8,30).to_s).to eq('08:30')
+        expect(TimeStamp(11,30).to_s).to eq('11:30')
+      end
+    end
+
+    describe '#==' do
+      it 'compares two time stamps' do
+        expect(TimeStamp(8,30)).to eq(TimeStamp(8,30))
+        expect(TimeStamp(8,30)).not_to eq(TimeStamp(8,31))
+      end
+    end
+
+    describe '#-' do
+      it 'subtracts one time stamp from another' do
+        expect(TimeStamp(8,0) - TimeStamp(0,10)).to eq(TimeStamp(7,50))
+      end
+    end
+
+    describe '#+' do
+      it 'adds two time stamps' do
+        expect(TimeStamp(8,30) + TimeStamp(1,30)).to eq(TimeStamp(10,0))
+      end
+    end
+
+    describe 'TimeStamp()' do
+      it 'parses float values' do
+        expect(TimeStamp(7.5)).to eq(TimeStamp(7, 30))
+      end
+
+      it 'parses strings' do
+        expect(TimeStamp('8:30')).to eq(TimeStamp(8, 30))
+      end
+
+      it 'parses time' do
+        time = Time.new(2019, 01, 01, 10, 30)
+        expect(TimeStamp(time)).to eq(TimeStamp('10:30'))
+      end
+    end
+  end
+end
+
+if !defined?(RSpec)
+  ifponto_client = CachedIFPontoClient.new
+  start_time = ifponto_client.start_time(Date.today)
+  worked_today = start_time != :not_available ? Today.new(start_time) : OpenStruct.new(started: 'N/A', ends: 'N/A', worked: 'N/A')
+  puts worked_today.worked
+  puts "---"
+  puts "started #{worked_today.started}"
+  puts "ends #{worked_today.ends}"
+  puts "---"
+
+  weekdays = Date.today
+    .downto(0)
+    .lazy
+    .reject(&:saturday?).reject(&:sunday?)
+
+  gf_client = CachedGlassFactoryClient.new
+  weekdays.drop(1).take(5).each do |date|
+    worked = ifponto_client.worked(date)
+    worked_gf = gf_client.worked(date)
+    puts date.strftime('%d/%m: ') + worked.to_s + " / " + worked_gf.to_s
+  end
+end
