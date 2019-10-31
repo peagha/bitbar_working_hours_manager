@@ -378,13 +378,15 @@ class GlassFactoryClient
 end
 
 class CachedGlassFactoryClient
+  using TimeExtensions
+
   def initialize(client = GlassFactoryClient.new, cache_store = PStoreCacheStore.new)
     @client = client
     @cache_store = cache_store
   end
 
   def worked(date)
-    @cache_store.fetch("gf_worked:#{date.strftime('%Y-%m-%d')}") do
+    @cache_store.fetch("gf_worked:#{date.strftime('%Y-%m-%d')}", expire_after: 6.hours) do
       @client.worked(date)
     end
   end
