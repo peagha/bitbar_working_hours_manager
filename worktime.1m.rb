@@ -288,6 +288,32 @@ class PStoreCacheStore
       @expire_after && @created + @expire_after < now
     end
   end
+
+  def clear
+    keep = %w[
+      ifponto_username
+      ifponto_password
+      ifponto_token
+      glass_factory_member_id
+      glass_factory_token
+      glass_factory_email
+    ]
+    @pstore.transaction do
+      (@pstore.roots - keep).each { |key| @pstore.delete(key) }
+    end
+  end
+
+  def clear_all
+    @pstore.transaction do
+      @pstore.roots.each { |key| @pstore.delete(key) }
+    end
+  end
+
+  def entries
+    @pstore.transaction do
+      @pstore.roots.map { |key| [key, @pstore[key]] }.to_h
+    end
+  end
 end
 
 class CredentialDialog
