@@ -1,12 +1,12 @@
 #!/usr/bin/env /Users/peagha/.rbenv/shims/ruby
 
-# <bitbar.title>Work Time</bitbar.title>
+# <bitbar.title>Working Hours Manager</bitbar.title>
 # <bitbar.version>v0.1</bitbar.version>
 # <bitbar.author>Philippe Hardardt</bitbar.author>
 # <bitbar.author.github>peagha</bitbar.author.github>
 # <bitbar.desc></bitbar.desc>
 # <bitbar.image></bitbar.image>
-# <bitbar.abouturl>http://github.com/kizzx2/bitbar-countdown-timer</bitbar.abouturl>
+# <bitbar.abouturl>https://github.com/peagha/bitbar_working_hours_manager</bitbar.abouturl>
 
 # TODO:
 # - don't cache for long when ifponto time == 0
@@ -123,7 +123,7 @@ class IFPontoClient
         "cmd=get_espelho2&de=#{date.strftime('%d/%m/%Y')}&ate=#{date.strftime('%d/%m/%Y')}&posicao=0&cod_funcionario=&funcionario=&cod_cargo=&cargo=&cod_depto=&depto=&cod_empresa=&empresa=&tipo_salario=&tipo_pessoa=&demitido=false&bloqueado=false",
         'Cookie' => "iFractal_Sistemas=#{token}"
       )
-      throw(:invalid_token) unless response.code == "200"
+      throw(:invalid_token) unless response.code == '200'
 
       entry = JSON.parse(response.body)['itens'].first['mc1']
       if ['FALTA', 'FOLGA', nil].include?(entry)
@@ -320,9 +320,9 @@ class GlassFactoryClient
     http.use_ssl = true
 
     request = Net::HTTP::Get.new(url)
-    request["X-User-Token"] = @credential_source.glass_factory_token
-    request["X-User-Email"] = @credential_source.glass_factory_email
-    request["X-Account-Subdomain"] = 'plataformatec'
+    request['X-User-Token'] = @credential_source.glass_factory_token
+    request['X-User-Email'] = @credential_source.glass_factory_email
+    request['X-Account-Subdomain'] = 'plataformatec'
 
     minutes = JSON.parse(http.request(request).body).sum { |entry| entry['time'] } / 60
     TimeStamp(0, minutes)
@@ -440,16 +440,16 @@ if defined?(RSpec)
   RSpec.describe Today do
     describe '#ends' do
       it 'returns the time when the expected work hours are complete' do
-        started = TimeStamp(10, 0)
+        started = TimeStamp('10:00')
         today = Today.new(started)
 
-        expect(today.ends).to eq(TimeStamp(19, 15))
+        expect(today.ends).to eq(TimeStamp('19:15'))
       end
     end
 
     describe '#started' do
       it 'is equal to the start time' do
-        started = TimeStamp(10, 0)
+        started = TimeStamp('10:00')
         today = Today.new(started)
 
         expect(today.started).to eq(started)
@@ -462,24 +462,24 @@ if defined?(RSpec)
         today = Today.new(started)
         now = TimeStamp('11:00')
 
-        expect(today.worked(now)).to eq(TimeStamp(1, 0))
+        expect(today.worked(now)).to eq(TimeStamp('01:00'))
       end
 
       it 'stops the clock during break time' do
-        started = TimeStamp(10, 0)
+        started = TimeStamp('10:00')
         today = Today.new(started)
 
         now = TimeStamp('12:00')
-        expect(today.worked(now)).to eq(TimeStamp(2, 0))
+        expect(today.worked(now)).to eq(TimeStamp('02:00'))
 
         now = TimeStamp('12:01')
-        expect(today.worked(now)).to eq(TimeStamp(2, 0))
+        expect(today.worked(now)).to eq(TimeStamp('02:00'))
 
         now = TimeStamp('13:15')
-        expect(today.worked(now)).to eq(TimeStamp(2, 0))
+        expect(today.worked(now)).to eq(TimeStamp('02:00'))
 
         now = TimeStamp('13:16')
-        expect(today.worked(now)).to eq(TimeStamp(2, 1))
+        expect(today.worked(now)).to eq(TimeStamp('02:01'))
       end
     end
   end
@@ -512,20 +512,20 @@ if defined?(RSpec)
 
     describe '#==' do
       it 'compares two time stamps' do
-        expect(TimeStamp(8,30)).to eq(TimeStamp(8,30))
-        expect(TimeStamp(8,30)).not_to eq(TimeStamp(8,31))
+        expect(TimeStamp('08:30')).to eq(TimeStamp('08:30'))
+        expect(TimeStamp('08:30')).not_to eq(TimeStamp('08:31'))
       end
     end
 
     describe '#-' do
       it 'subtracts one time stamp from another' do
-        expect(TimeStamp(8,0) - TimeStamp(0,10)).to eq(TimeStamp(7,50))
+        expect(TimeStamp('08:00') - TimeStamp('00:10')).to eq(TimeStamp('7:50'))
       end
     end
 
     describe '#+' do
       it 'adds two time stamps' do
-        expect(TimeStamp(8,30) + TimeStamp(1,30)).to eq(TimeStamp(10,0))
+        expect(TimeStamp('08:30') + TimeStamp('1:30')).to eq(TimeStamp('10:00'))
       end
     end
 
@@ -551,10 +551,10 @@ if !defined?(RSpec)
   start_time = ifponto_client.start_time(Date.today)
   worked_today = start_time ? Today.new(start_time) : OpenStruct.new(started: 'N/A', ends: 'N/A', worked: 'N/A')
   puts worked_today.worked
-  puts "---"
+  puts '---'
   puts "started #{worked_today.started}"
   puts "ends #{worked_today.ends}"
-  puts "---"
+  puts '---'
 
   weekdays = Date.today
     .downto(0)
@@ -565,7 +565,7 @@ if !defined?(RSpec)
   weekdays.drop(1).take(5).each do |date|
     worked = ifponto_client.worked(date)
     worked_gf = gf_client.worked(date)
-    puts date.strftime('%d/%m: ') + worked.to_s + " / " + worked_gf.to_s
+    puts date.strftime('%d/%m: ') + worked.to_s + ' / ' + worked_gf.to_s
   end
 end
 
