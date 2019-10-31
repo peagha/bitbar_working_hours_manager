@@ -26,6 +26,26 @@ require 'date'
 require 'pstore'
 require 'open3'
 
+module TimeExtensions
+  refine Integer do
+    def minutes
+      self * 60
+    end
+
+    def hours
+      minutes * 60
+    end
+
+    def days
+      hours * 24
+    end
+
+    alias day    days
+    alias hour   hours
+    alias minute minutes
+  end
+end
+
 def TimeStamp(hours_or_value, minutes = :nd)
   if minutes == :nd
     case hours_or_value
@@ -156,20 +176,22 @@ class IFPontoClient
 end
 
 class CachedIFPontoClient
+  using TimeExtensions
+
   def initialize(client = IFPontoClient.new, cache_store = PStoreCacheStore.new)
     @client = client
     @cache_store = cache_store
   end
 
   def start_time(date)
-    expire_after_rule = ->(value) { value.nil? ? (10 * 60) : nil }
+    expire_after_rule = ->(value) { value.nil? ? (10.minutes) : nil }
     @cache_store.fetch("start_time:#{date.strftime('%Y-%m-%d')}", expire_after_rule: expire_after_rule) do
       @client.start_time(date)
     end
   end
 
   def worked(date)
-    expire_after_rule = ->(value) { value == TimeStamp('0:00') ? 60 * 60 : 60 * 60 * 24 }
+    expire_after_rule = ->(value) { value == TimeStamp('0:00') ? 1.hour : 1.day }
     @cache_store.fetch("worked:#{date.strftime('%Y-%m-%d')}", expire_after_rule: expire_after_rule) do
       @client.worked(date)
     end
