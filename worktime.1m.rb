@@ -9,8 +9,6 @@
 # <bitbar.abouturl>https://github.com/peagha/bitbar_working_hours_manager</bitbar.abouturl>
 
 # TODO:
-# - don't cache for long when ifponto time == 0
-# - cache GF for a short period of time
 # - make script compatible with older versions of Ruby
 # - add GF create time entry
 # - highlight unapproved ifponto entries
