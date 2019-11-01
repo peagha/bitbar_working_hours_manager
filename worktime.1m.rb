@@ -23,6 +23,7 @@ require 'cgi'
 require 'date'
 require 'pstore'
 require 'open3'
+require 'set'
 
 module TimeExtensions
   refine Integer do
@@ -398,6 +399,26 @@ class GlassFactoryClient
       .map { |id:, name:, **| Activity.new(id, name) }
   end
 
+  def track_time(date, worked, description, activity_id)
+    query_string = URI.encode_www_form(
+      activity_id: activity_id,
+      date: date.strftime('%Y-%m-%d'),
+      time: worked.to_minutes * 60, # seconds
+      comment: description
+    )
+    member_id = @credential_source.glass_factory_member_id
+    url = URI("https://plataformatec.glassfactory.io/api/public/v1/members/#{member_id}/time_logs.json?#{query_string}")
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+
+    request = Net::HTTP::Post.new(url)
+    request['X-User-Token'] = @credential_source.glass_factory_token
+    request['X-User-Email'] = @credential_source.glass_factory_email
+
+    http.request(request).code == '200'
+  end
+
   Project = Struct.new(:id, :name)
   Activity = Struct.new(:id, :name)
 end
@@ -621,7 +642,7 @@ if defined?(RSpec)
   end
 end
 
-if !defined?(RSpec)
+if !defined?(RSpec) && ARGV.empty?
   ifponto_client = CachedIFPontoClient.new
   start_time = ifponto_client.start_time(Date.today)
   worked_today = start_time ? Today.new(start_time) : OpenStruct.new(started: 'N/A', ends: 'N/A', worked: 'N/A')
@@ -636,11 +657,48 @@ if !defined?(RSpec)
     .lazy
     .reject(&:saturday?).reject(&:sunday?)
 
+  recent = PStoreCacheStore.new.read('recent')&.value || []
+
   gf_client = CachedGlassFactoryClient.new
   weekdays.drop(1).take(5).each do |date|
     worked = ifponto_client.worked(date)
     worked_gf = gf_client.worked(date)
     puts date.strftime('%d/%m: ') + worked.to_s + ' / ' + worked_gf.to_s
+    puts recent.map { |project:, activity:| "--#{project.name} - #{activity.name} | bash=#{__FILE__} param1=--track param2=#{date.strftime('%d/%m/%Y')} param3=#{worked} param4=#{activity.id} terminal=false" }
+    puts "--Other... | bash=#{__FILE__} param1=--track param2=#{date.strftime('%d/%m/%Y')} param3=#{worked} terminal=false"
+  end
+else
+  def choose_from(options)
+    options_str = options.map { |option| %("#{option.name}") }.join(', ')
+    script = %(Tell application "System Events" to choose from list {#{options_str}})
+    selected = Open3.capture3('osascript', *['-e', script])
+      .first
+      .strip
+      .force_encoding('UTF-8')
+
+    options.find { |option| option.name == selected }
+  end
+
+  def select_activity
+    store = PStoreCacheStore.new
+    client = GlassFactoryClient.new
+    project = choose_from(client.projects)
+    choose_from(client.activities(project.id)).tap do |activity|
+      recent = store.read('recent')&.value || Set.new
+      store.write('recent', recent << { project: project, activity: activity })
+    end
+  end
+
+  if ARGV[0] == '--track'
+    date = Date.strptime(ARGV[1],"%d/%m/%Y")
+    worked = TimeStamp(ARGV[2])
+    activity_id = ARGV[3] || select_activity.id
+    script = 'Tell application "System Events" to display dialog "Quais foram as suas atividades?" default answer ""'
+    description = Open3.capture3('osascript', *['-e',script,'-e', 'text returned of result']).first.strip.force_encoding('UTF-8')
+
+    result = GlassFactoryClient.new.track_time(date, worked, description, activity_id)
+    alert = result ? 'OK!' : 'Erro'
+
+    Open3.capture3('osascript', *['-e', "display alert \"#{alert}\""])
   end
 end
-
