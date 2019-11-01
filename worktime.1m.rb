@@ -368,11 +368,38 @@ class GlassFactoryClient
     request = Net::HTTP::Get.new(url)
     request['X-User-Token'] = @credential_source.glass_factory_token
     request['X-User-Email'] = @credential_source.glass_factory_email
-    request['X-Account-Subdomain'] = 'plataformatec'
 
     minutes = JSON.parse(http.request(request).body).sum { |entry| entry['time'] } / 60
     TimeStamp(0, minutes)
   end
+
+  def projects
+    url = URI('https://plataformatec.glassfactory.io/api/public/v1/projects.json')
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+
+    request = Net::HTTP::Get.new(url)
+    request['X-User-Token'] = @credential_source.glass_factory_token
+    request['X-User-Email'] = @credential_source.glass_factory_email
+    JSON.parse(http.request(request).body, symbolize_names: true)
+      .reject { |closed:, **| closed }
+      .map { |id:, name:, **| Project.new(id, name) }
+  end
+
+  def activities(project_id)
+    url = URI("https://plataformatec.glassfactory.io/api/public/v1/projects/#{project_id}/activities.json")
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+    request = Net::HTTP::Get.new(url)
+    request['X-User-Token'] = @credential_source.glass_factory_token
+    request['X-User-Email'] = @credential_source.glass_factory_email
+    JSON.parse(http.request(request).body, symbolize_names: true)
+      .map { |id:, name:, **| Activity.new(id, name) }
+  end
+
+  Project = Struct.new(:id, :name)
+  Activity = Struct.new(:id, :name)
 end
 
 class CachedGlassFactoryClient
