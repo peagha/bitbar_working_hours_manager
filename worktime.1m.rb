@@ -250,7 +250,9 @@ end
 
 class PStoreCacheStore
   def initialize
-    @pstore = PStore.new('/tmp/settings.pstore')
+    directory_path = "#{ENV['HOME']}/.config/bitbar_working_hours"
+    Dir.mkdir(directory_path) unless Dir.exist?(directory_path)
+    @pstore = PStore.new("#{directory_path}/settings.pstore")
   end
 
   def fetch(key, expire_after: nil, expire_after_rule: ->(_) { expire_after })
