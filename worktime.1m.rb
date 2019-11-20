@@ -145,7 +145,7 @@ class IFPontoClient
       throw(:invalid_token) unless response.code == '200'
 
       entry = JSON.parse(response.body)['itens'].first['mc1']
-      if ['FALTA', 'FOLGA', nil].include?(entry)
+      if ['FALTA', 'FOLGA', nil, '* A'].include?(entry)
         nil
       else
         TimeStamp(entry)
@@ -164,7 +164,12 @@ class IFPontoClient
       worked_float = entry['t_h_total_calculado'].to_f
 
       if worked_float > 0
-        TimeStamp(worked_float)
+        # handle lunch time not loaded; mc3 is nil when lunch time isn't loaded yet
+        if entry['mc3'].nil?
+          TimeStamp(worked_float) - TimeStamp(entry['total_intervalo'])
+        else
+          TimeStamp(worked_float)
+        end
       else
         entry['alteracao'].split.each_slice(2).sum(TimeStamp('00:00')) do |start_time, end_time|
           TimeStamp(end_time) - TimeStamp(start_time)
