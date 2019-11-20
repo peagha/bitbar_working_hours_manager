@@ -642,7 +642,7 @@ if defined?(RSpec)
   end
 end
 
-if !defined?(RSpec) && ARGV.empty?
+if !defined?(RSpec) && ARGV.empty? && __FILE__ == $0
   ifponto_client = CachedIFPontoClient.new
   start_time = ifponto_client.start_time(Date.today)
   worked_today = start_time ? Today.new(start_time) : OpenStruct.new(started: 'N/A', ends: 'N/A', worked: 'N/A')
