@@ -163,7 +163,7 @@ class IFPontoClient
       entry = JSON.parse(response.body)['itens'].first
       worked_float = entry['t_h_total_calculado'].to_f
 
-      if worked_float > 0
+      if worked_float > 0 && entry['mc1'] != '* A'
         # handle lunch time not loaded; mc3 is nil when lunch time isn't loaded yet
         if entry['mc3'].nil?
           TimeStamp(worked_float) - TimeStamp(entry['total_intervalo'])
