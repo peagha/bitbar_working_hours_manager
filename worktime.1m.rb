@@ -307,9 +307,9 @@ class PStoreCacheStore
     end
   end
 
-  def clear_all
+  def clear_all(keys = @pstore.roots)
     @pstore.transaction do
-      @pstore.roots.each { |key| @pstore.delete(key) }
+      keys.each { |key| @pstore.delete(key) }
     end
   end
 
@@ -669,8 +669,8 @@ if !defined?(RSpec) && ARGV.empty? && __FILE__ == $0
     worked = ifponto_client.worked(date)
     worked_gf = gf_client.worked(date)
     puts date.strftime('%d/%m: ') + worked.to_s + ' / ' + worked_gf.to_s
-    puts recent.map { |project:, activity:| "--#{project.name} - #{activity.name} | bash=#{__FILE__} param1=--track param2=#{date.strftime('%d/%m/%Y')} param3=#{worked} param4=#{activity.id} terminal=false" }
-    puts "--Other... | bash=#{__FILE__} param1=--track param2=#{date.strftime('%d/%m/%Y')} param3=#{worked} terminal=false"
+    puts recent.map { |project:, activity:| "--#{project.name} - #{activity.name} | bash=#{__FILE__} param1=--track param2=#{date.strftime('%d/%m/%Y')} param3=#{worked} param4=#{activity.id} terminal=false refresh=true" }
+    puts "--Other... | bash=#{__FILE__} param1=--track param2=#{date.strftime('%d/%m/%Y')} param3=#{worked} terminal=false refresh=true"
   end
 else
   def choose_from(options)
@@ -705,5 +705,8 @@ else
     alert = result ? 'OK!' : 'Erro'
 
     Open3.capture3('osascript', *['-e', "display alert \"#{alert}\""])
+    if result
+      PStoreCacheStore.new.clear_all(["gf_worked:#{date.strftime('%Y-%m-%d')}"])
+    end
   end
 end
