@@ -671,6 +671,8 @@ if !defined?(RSpec) && ARGV.empty? && __FILE__ == $0
     puts date.strftime('%d/%m: ') + worked.to_s + ' / ' + worked_gf.to_s
     puts recent.map { |project:, activity:| "--#{project.name} - #{activity.name} | bash=#{__FILE__} param1=--track param2=#{date.strftime('%d/%m/%Y')} param3=#{worked} param4=#{activity.id} terminal=false refresh=true" }
     puts "--Other... | bash=#{__FILE__} param1=--track param2=#{date.strftime('%d/%m/%Y')} param3=#{worked} terminal=false refresh=true"
+    puts '-----'
+    puts "--Refresh | bash=#{__FILE__} param1=--clear param2=#{date.strftime('%d/%m/%Y')} terminal=false refresh=true"
   end
 else
   def choose_from(options)
@@ -708,5 +710,9 @@ else
     if result
       PStoreCacheStore.new.clear_all(["gf_worked:#{date.strftime('%Y-%m-%d')}"])
     end
+  elsif ARGV[0] == '--clear'
+    date = Date.strptime(ARGV[1],"%d/%m/%Y").strftime('%Y-%m-%d')
+
+    PStoreCacheStore.new.clear_all(["gf_worked:#{date}", "worked:#{date}"])
   end
 end
