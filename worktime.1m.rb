@@ -165,7 +165,7 @@ class IFPontoClient
 
       if worked_float > 0 && entry['mc1'] != '* A'
         # handle lunch time not loaded; mc3 is nil when lunch time isn't loaded yet
-        if entry['mc3'].nil?
+        if entry['mc3'].nil? && entry['obs_marcacao_alterada'].to_s.empty?
           TimeStamp(worked_float) - TimeStamp(entry['total_intervalo'])
         else
           TimeStamp(worked_float)
