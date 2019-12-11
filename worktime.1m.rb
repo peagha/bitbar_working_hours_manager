@@ -668,9 +668,10 @@ if !defined?(RSpec) && ARGV.empty? && __FILE__ == $0
   weekdays.drop(1).take(5).each do |date|
     worked = ifponto_client.worked(date)
     worked_gf = gf_client.worked(date)
+    untracked = worked - worked_gf
     puts date.strftime('%d/%m: ') + worked.to_s + ' / ' + worked_gf.to_s
-    puts recent.map { |project:, activity:| "--#{project.name} - #{activity.name} | bash=#{__FILE__} param1=--track param2=#{date.strftime('%d/%m/%Y')} param3=#{worked} param4=#{activity.id} terminal=false refresh=true" }
-    puts "--Other... | bash=#{__FILE__} param1=--track param2=#{date.strftime('%d/%m/%Y')} param3=#{worked} terminal=false refresh=true"
+    puts recent.map { |project:, activity:| "--#{project.name} - #{activity.name} | bash=#{__FILE__} param1=--track param2=#{date.strftime('%d/%m/%Y')} param3=#{untracked} param4=#{activity.id} terminal=false refresh=true" }
+    puts "--Other... | bash=#{__FILE__} param1=--track param2=#{date.strftime('%d/%m/%Y')} param3=#{untracked} terminal=false refresh=true"
     puts '-----'
     puts "--Refresh | bash=#{__FILE__} param1=--clear param2=#{date.strftime('%d/%m/%Y')} terminal=false refresh=true"
   end
